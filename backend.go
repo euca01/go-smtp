@@ -5,20 +5,21 @@ import (
 )
 
 var (
-	ErrAuthRequired    = &SMTPError{
-		Code: 502,
+	ErrAuthRequired = &SMTPError{
+		Code:         502,
 		EnhancedCode: EnhancedCode{5, 7, 0},
-		Message: "Please authenticate first",
+		Message:      "Please authenticate first",
 	}
-	ErrAuthUnsupported    = &SMTPError{
-		Code: 502,
+	ErrAuthUnsupported = &SMTPError{
+		Code:         502,
 		EnhancedCode: EnhancedCode{5, 7, 0},
-		Message: "Authentication not supported",
-	})
+		Message:      "Authentication not supported",
+	}
+)
 
 // A SMTP server backend.
 type Backend interface {
-	NewSession(c ConnectionState, hostname string) (Session, error)
+	NewSession(c *Conn) (Session, error)
 }
 
 type BodyType string
@@ -76,6 +77,8 @@ type Session interface {
 	// Add recipient for currently processed message.
 	Rcpt(to string) error
 	// Set currently processed message contents and send it.
+	//
+	// r must be consumed before Data returns.
 	Data(r io.Reader) error
 }
 

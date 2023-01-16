@@ -109,6 +109,8 @@ func (s *Server) Serve(l net.Listener) error {
 	s.listeners = append(s.listeners, l)
 	s.locker.Unlock()
 
+	var tempDelay time.Duration // how long to sleep on accept failure
+
 	for {
 		c, err := l.Accept()
 		if err != nil {
@@ -117,11 +119,28 @@ func (s *Server) Serve(l net.Listener) error {
 				// we called Close()
 				return nil
 			default:
-				return err
 			}
+			if ne, ok := err.(net.Error); ok && ne.Temporary() {
+				if tempDelay == 0 {
+					tempDelay = 5 * time.Millisecond
+				} else {
+					tempDelay *= 2
+				}
+				if max := 1 * time.Second; tempDelay > max {
+					tempDelay = max
+				}
+				s.ErrorLog.Printf("accept error: %s; retrying in %s", err, tempDelay)
+				time.Sleep(tempDelay)
+				continue
+			}
+			return err
 		}
-
-		go s.handleConn(newConn(c, s))
+		go func() {
+			err := s.handleConn(newConn(c, s))
+			if err != nil {
+				s.ErrorLog.Printf("handler error: %s", err)
+			}
+		}()
 	}
 }
 
@@ -153,7 +172,7 @@ func (s *Server) handleConn(c *Conn) error {
 	c.greet()
 
 	for {
-		line, err := c.ReadLine()
+		line, err := c.readLine()
 		if err == nil {
 			cmd, arg, err := parseCmd(line)
 			if err != nil {
@@ -163,20 +182,20 @@ func (s *Server) handleConn(c *Conn) error {
 
 			c.handle(cmd, arg)
 		} else {
-			if err == io.EOF {
+			if err == io.EOF || errors.Is(err, net.ErrClosed) {
 				return nil
 			}
 			if err == ErrTooLongLine {
-				c.WriteResponse(500, EnhancedCode{5, 4, 0}, "Too long line, closing connection")
+				c.writeResponse(500, EnhancedCode{5, 4, 0}, "Too long line, closing connection")
 				return nil
 			}
 
 			if neterr, ok := err.(net.Error); ok && neterr.Timeout() {
-				c.WriteResponse(221, EnhancedCode{2, 4, 2}, "Idle timeout, bye bye")
+				c.writeResponse(221, EnhancedCode{2, 4, 2}, "Idle timeout, bye bye")
 				return nil
 			}
 
-			c.WriteResponse(221, EnhancedCode{2, 4, 0}, "Connection error, sorry")
+			c.writeResponse(221, EnhancedCode{2, 4, 0}, "Connection error, sorry")
 			return err
 		}
 	}
